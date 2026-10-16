@@ -13,7 +13,7 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - None
 
 ### Bug fixes
-- None
+- Pair metric correlations by generation, source run, sample and epoch; reject duplicate observations, preserve scorer identities and report finite-pair counts.
 
 ### Documentation
 - None
