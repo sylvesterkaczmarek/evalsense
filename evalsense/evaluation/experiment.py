@@ -9,6 +9,7 @@ from evalsense.datasets import DatasetManager, DatasetRecord
 from evalsense.evaluation import Evaluator
 from evalsense.generation import GenerationSteps, ModelConfig, ModelRecord
 from evalsense.tasks import DefaultTaskPreprocessor, TaskPreprocessor
+from evalsense.utils.cache import fingerprint
 
 type RecordStatus = Literal["started", "success", "cancelled", "error"]
 type ExperimentDefinitions = (
@@ -51,8 +52,12 @@ class GenerationRecord(BaseModel, frozen=True):
     task_name: str
     model_record: ModelRecord
     experiment_name: str | None = None
+    generator_fingerprint: str = ""
+    task_fingerprint: str = ""
 
-    def get_evaluation_record(self, evaluator_name: str) -> "EvaluationRecord":
+    def get_evaluation_record(
+        self, evaluator_name: str, evaluator_fingerprint: str = ""
+    ) -> "EvaluationRecord":
         """Generates an evaluation record from the generation record.
 
         Args:
@@ -64,6 +69,7 @@ class GenerationRecord(BaseModel, frozen=True):
         return EvaluationRecord(
             **self.model_dump(),
             evaluator_name=evaluator_name,
+            evaluator_fingerprint=evaluator_fingerprint,
         )
 
     @property
@@ -95,6 +101,8 @@ class GenerationRecord(BaseModel, frozen=True):
             and self.task_name == other.task_name
             and self.model_record == other.model_record
             and self.experiment_name == other.experiment_name
+            and self.generator_fingerprint == other.generator_fingerprint
+            and self.task_fingerprint == other.task_fingerprint
         )
 
     def __lt__(self, other: object) -> bool:
@@ -114,12 +122,16 @@ class GenerationRecord(BaseModel, frozen=True):
             self.task_name,
             self.model_record,
             self.experiment_name or "",
+            self.generator_fingerprint,
+            self.task_fingerprint,
         ) < (
             other.dataset_record,
             other.generator_name,
             other.task_name,
             other.model_record,
             other.experiment_name or "",
+            other.generator_fingerprint,
+            other.task_fingerprint,
         )
 
     def __hash__(self) -> int:
@@ -135,6 +147,8 @@ class GenerationRecord(BaseModel, frozen=True):
                 self.task_name,
                 self.model_record,
                 self.experiment_name,
+                self.generator_fingerprint,
+                self.task_fingerprint,
             )
         )
 
@@ -153,6 +167,7 @@ class EvaluationRecord(GenerationRecord, frozen=True):
     """
 
     evaluator_name: str
+    evaluator_fingerprint: str = ""
 
     @property
     def generation_record(self) -> GenerationRecord:
@@ -162,7 +177,7 @@ class EvaluationRecord(GenerationRecord, frozen=True):
             GenerationRecord: The generation record.
         """
         return GenerationRecord(
-            **self.model_dump(exclude={"evaluator_name"}),
+            **self.model_dump(exclude={"evaluator_name", "evaluator_fingerprint"}),
         )
 
     def get_meta_grouped_record(self, metric_name: str) -> "MetaTierGroupedRecord":
@@ -175,8 +190,9 @@ class EvaluationRecord(GenerationRecord, frozen=True):
             PerturbationGroupedRecord: The perturbation grouped record.
         """
         return MetaTierGroupedRecord(
-            **self.model_dump(exclude={"generator_name"}),
+            **self.model_dump(exclude={"generator_name", "generator_fingerprint"}),
             generator_name="",
+            generator_fingerprint="",
             metric_name=metric_name,
         )
 
@@ -206,7 +222,11 @@ class EvaluationRecord(GenerationRecord, frozen=True):
         generation_equal = super().__eq__(other)
         if generation_equal is NotImplemented:
             return generation_equal
-        return generation_equal and self.evaluator_name == other.evaluator_name
+        return (
+            generation_equal
+            and self.evaluator_name == other.evaluator_name
+            and self.evaluator_fingerprint == other.evaluator_fingerprint
+        )
 
     def __lt__(self, other: object) -> bool:
         """Checks if this record is less than another record.
@@ -222,7 +242,10 @@ class EvaluationRecord(GenerationRecord, frozen=True):
         if super().__lt__(other):
             return True
         elif super().__eq__(other):
-            return self.evaluator_name < other.evaluator_name
+            return (self.evaluator_name, self.evaluator_fingerprint) < (
+                other.evaluator_name,
+                other.evaluator_fingerprint,
+            )
         else:
             return False
 
@@ -239,7 +262,10 @@ class EvaluationRecord(GenerationRecord, frozen=True):
                 self.task_name,
                 self.model_record,
                 self.experiment_name,
+                self.generator_fingerprint,
+                self.task_fingerprint,
                 self.evaluator_name,
+                self.evaluator_fingerprint,
             )
         )
 
@@ -313,7 +339,10 @@ class MetaTierGroupedRecord(EvaluationRecord, frozen=True):
                 self.task_name,
                 self.model_record,
                 self.experiment_name,
+                self.generator_fingerprint,
+                self.task_fingerprint,
                 self.evaluator_name,
+                self.evaluator_fingerprint,
                 self.metric_name,
             )
         )
@@ -332,6 +361,7 @@ class ExperimentConfig:
     )
     evaluator: Evaluator | None = None
     name: str | None = None
+    field_spec_version: str | None = field(default=None, kw_only=True)
 
     @property
     def generation_record(self) -> GenerationRecord:
@@ -346,6 +376,16 @@ class ExperimentConfig:
             task_name=self.task_preprocessor.name,
             model_record=self.model_config.record,
             experiment_name=self.name,
+            generator_fingerprint=self.generation_steps.cache_key,
+            task_fingerprint=fingerprint(
+                {
+                    "preprocessor": self.task_preprocessor.cache_key,
+                    "field_spec": fingerprint(
+                        self.field_spec if self.field_spec is not None else FieldSpec(),
+                        version=self.field_spec_version,
+                    ),
+                }
+            ),
         )
 
     @property
@@ -362,6 +402,7 @@ class ExperimentConfig:
 
         return self.generation_record.get_evaluation_record(
             self.evaluator.name,
+            self.evaluator.cache_key,
         )
 
 
@@ -375,6 +416,7 @@ class TaskConfig:
     task_preprocessor: TaskPreprocessor = field(
         default_factory=lambda: DefaultTaskPreprocessor()
     )
+    field_spec_version: str | None = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -414,6 +456,7 @@ class ExperimentBatchConfig:
                                 dataset_manager=task.dataset_manager,
                                 generation_steps=task.generation_steps,
                                 field_spec=task.field_spec,
+                                field_spec_version=task.field_spec_version,
                                 task_preprocessor=task.task_preprocessor,
                                 model_config=llm_manager,
                                 evaluator=evaluator,
@@ -426,6 +469,7 @@ class ExperimentBatchConfig:
                             dataset_manager=task.dataset_manager,
                             generation_steps=task.generation_steps,
                             field_spec=task.field_spec,
+                            field_spec_version=task.field_spec_version,
                             task_preprocessor=task.task_preprocessor,
                             model_config=llm_manager,
                             name=self.name,

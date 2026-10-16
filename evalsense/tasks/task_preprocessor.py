@@ -7,6 +7,7 @@ from inspect_ai.dataset import Dataset, FieldSpec, RecordToSample, json_dataset
 from evalsense.datasets.dataset_manager import DatasetManager
 from evalsense.utils.huggingface import disable_dataset_progress_bars
 from evalsense.utils.files import to_safe_filename
+from evalsense.utils.cache import fingerprint
 
 
 class TaskPreprocessingFunction(Protocol):
@@ -42,6 +43,8 @@ class TaskPreprocessor:
         self,
         name: str,
         preprocessing_function: TaskPreprocessingFunction,
+        *,
+        version: str | None = None,
     ) -> None:
         """Initializes the task preprocessor.
 
@@ -49,9 +52,20 @@ class TaskPreprocessor:
             name (str): The name of the task preprocessor.
             preprocessing_function (TaskPreprocessingFunction): The function used to
                 preprocess the dataset.
+            version (str | None): Required for custom code. Bump when its behavior
+                or external inputs change.
         """
         self.name = name
         self.preprocessing_function = preprocessing_function
+        self.version = version
+
+    @property
+    def cache_key(self) -> str:
+        """Version custom preprocessing rather than guessing its implementation."""
+        return fingerprint(
+            {"implementation": type(self), "function": self.preprocessing_function},
+            version=self.version,
+        )
 
     def __call__(
         self,
@@ -77,10 +91,14 @@ class TaskPreprocessor:
         """
         tasks_path = Path(dataset_manager.version_path / "tasks")
         tasks_path.mkdir(parents=True, exist_ok=True)
-        dataset_filename = (
-            f"{to_safe_filename(dataset_manager.name)}-"
-            f"{to_safe_filename(self.name)}.jsonl"
+        data_key = fingerprint(
+            {
+                "dataset": dataset_manager.record,
+                "content": hf_dataset._fingerprint,
+                "preprocessor": self.cache_key,
+            }
         )
+        dataset_filename = f"{to_safe_filename(self.name)[:40]}-{data_key}.jsonl"
         task_data_path = tasks_path / dataset_filename
 
         if not task_data_path.exists() or force_reprocess:
@@ -104,9 +122,10 @@ def default_task_preprocessing_function(
 class DefaultTaskPreprocessor(TaskPreprocessor):
     """Default task preprocessor that returns the input dataset unchanged."""
 
-    def __init__(self, name="Identity") -> None:
+    def __init__(self, name="Identity", *, version: str | None = None) -> None:
         """Initializes the default task preprocessor."""
         super().__init__(
             name=name,
             preprocessing_function=default_task_preprocessing_function,
+            version=version,
         )

@@ -180,6 +180,7 @@ def get_bertscore_evaluator(
     rescale_with_baseline: bool = False,
     baseline_path: str | None = None,
     use_fast_tokenizer: bool = False,
+    version: str | None = None,
 ) -> Evaluator:
     """
     Returns a BERTScore evaluator.
@@ -212,9 +213,26 @@ def get_bertscore_evaluator(
         use_fast_tokenizer (bool, optional): The `use_fast` parameter passed to HF
             tokenizer. Defaults to `False`.
 
+        version (str | None): Cache version for custom code or external resources.
+
     Returns:
         Evaluator: The BERTScore evaluator.
     """
+    cache_parameters = {
+        "method": "bertscore",
+        "metrics": metrics,
+        "model_type": model_type,
+        "lang": lang,
+        "num_layers": num_layers,
+        "verbose": verbose,
+        "idf": idf,
+        "device": device,
+        "batch_size": batch_size,
+        "nthreads": nthreads,
+        "rescale_with_baseline": rescale_with_baseline,
+        "baseline_path": baseline_path,
+        "use_fast_tokenizer": use_fast_tokenizer,
+    }
     if metrics is None:
         metrics = [
             {"BERTScore Precision": [mean()]},
@@ -268,6 +286,8 @@ def get_bertscore_evaluator(
         return score
 
     return Evaluator(
+        version=version,
+        cache_parameters=cache_parameters,
         name=name,
         scorer=bertscore_scorer(),
         cleanup_fun=cleanup_bertscore,
