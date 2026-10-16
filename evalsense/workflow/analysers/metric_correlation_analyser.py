@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import seaborn as sns
 
+from inspect_ai.log import EvalLog
+
 from evalsense.evaluation import GenerationRecord
 from evalsense.workflow import Project, ResultAnalyser
 
@@ -21,7 +23,7 @@ OUTPUT_FORMATTERS = {
     "numpy": lambda df: df.to_numpy(),
 }
 
-type ObservationKey = tuple[GenerationRecord, str, type, str | int, int]
+type ObservationKey = tuple[GenerationRecord, tuple[str, ...], type, str | int, int]
 type MetricKey = tuple[str, str, str | None]
 
 
@@ -38,6 +40,24 @@ class CorrelationResults[T: pl.DataFrame | pd.DataFrame | npt.NDArray[np.float64
     figure: Figure | None = None
     paired_counts: T | None = None
     excluded_counts: T | None = None
+
+
+def _source_identity(log: EvalLog) -> tuple[str, ...]:
+    """Use the source evaluation ID, or legacy run/task IDs when unavailable."""
+    eval_id = getattr(log.eval, "eval_id", None)
+    if eval_id is not None:
+        if isinstance(eval_id, str) and eval_id:
+            return ("eval", eval_id)
+    else:
+        # Inspect releases before eval_id identify a source task within its run.
+        # Both IDs are copied with the generation log into evaluation logs.
+        run_id = log.eval.run_id
+        task_id = log.eval.task_id
+        if isinstance(run_id, str) and run_id and isinstance(task_id, str) and task_id:
+            return ("legacy", run_id, task_id)
+    raise ValueError(
+        "Cannot pair observations without a source eval ID or legacy run/task IDs."
+    )
 
 
 def _metric_names(
@@ -129,9 +149,7 @@ class MetricCorrelationAnalyser[T: CorrelationResults](ResultAnalyser[T]):
             generation = record.generation_record
             # Evaluation logs are copies of a generation log, so eval_id identifies
             # their common source. Paths and scoring timestamps do not.
-            source_id = log.eval.eval_id
-            if not source_id:
-                raise ValueError("Cannot pair observations without a source eval ID.")
+            source_id = _source_identity(log)
             generation_fields = generation.model_dump()
             evaluator_identity = json.dumps(
                 {
@@ -198,14 +216,20 @@ class MetricCorrelationAnalyser[T: CorrelationResults](ResultAnalyser[T]):
                 x, y = zip(*pairs)
                 if len(set(x)) < 2 or len(set(y)) < 2:
                     continue
-                result = pl.corr(
-                    pl.Series("left", x, dtype=pl.Float64),
-                    pl.Series("right", y, dtype=pl.Float64),
-                    method=corr_method,
-                    propagate_nans=True,
-                    eager=True,
+                value = (
+                    pl.DataFrame(
+                        {
+                            "left": pl.Series(x, dtype=pl.Float64),
+                            "right": pl.Series(y, dtype=pl.Float64),
+                        }
+                    )
+                    .select(
+                        pl.corr(
+                            "left", "right", method=corr_method, propagate_nans=True
+                        )
+                    )
+                    .item()
                 )
-                value = cast(pl.Series, result).item()
                 correlations[i][j] = correlations[j][i] = (
                     float(value) if value is not None else math.nan
                 )

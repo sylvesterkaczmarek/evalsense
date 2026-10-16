@@ -2,6 +2,7 @@ import math
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -62,6 +63,8 @@ def log(samples, source="source") -> EvalLog:
             dataset=EvalDataset(name="data"),
             config=EvalConfig(),
             eval_id=source,
+            run_id="fixture-run",
+            task_id=source,
         ),
         samples=samples,
     )
@@ -344,9 +347,33 @@ class CorrelationTests(unittest.TestCase):
 
     def test_missing_source_id_is_rejected(self):
         data = log([sample(1, {"a": 1})])
-        data.eval.eval_id = ""
+        if hasattr(data.eval, "eval_id"):
+            data.eval.eval_id = ""
+        data.eval.run_id = ""
+        data.eval.task_id = ""
         with self.assertRaisesRegex(ValueError, "source eval ID"):
             analyse({record(): data})
+
+    def test_legacy_source_identity_uses_both_run_and_task(self):
+        left = Mock(spec=EvalLog, samples=[sample(1, {"a": 1}), sample(2, {"a": 2})])
+        right = Mock(spec=EvalLog, samples=[sample(1, {"b": 2}), sample(2, {"b": 1})])
+        left.eval = SimpleNamespace(run_id="run", task_id="task")
+        right.eval = SimpleNamespace(run_id="run", task_id="task")
+        result = analyse({record("left"): left, record("right"): right})
+        self.assertAlmostEqual(cell(result.correlation_matrix, "a", "b"), -1)
+        for identity in [("other-run", "task"), ("run", "other-task")]:
+            with self.subTest(identity=identity):
+                right.eval = SimpleNamespace(run_id=identity[0], task_id=identity[1])
+                result = analyse({record("left"): left, record("right"): right})
+                self.assertEqual(cell(result.paired_counts, "a", "b"), 0)
+
+    def test_legacy_source_identity_requires_both_ids(self):
+        for run, task in [("", "task"), ("run", ""), ("", "")]:
+            with self.subTest(run=run, task=task):
+                data = Mock(spec=EvalLog, samples=[sample(1, {"a": 1})])
+                data.eval = SimpleNamespace(run_id=run, task_id=task)
+                with self.assertRaisesRegex(ValueError, "legacy run/task"):
+                    analyse({record(): data})
 
     def test_outputs_and_pearson_plot(self):
         project = Mock(spec=Project)

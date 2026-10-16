@@ -5,7 +5,9 @@
 ## Paired metric correlations
 
 `MetricCorrelationAnalyser` joins scores using the full generation record,
-source Inspect `eval_id`, sample ID (including its type), and epoch. Copies of a
+source Inspect `eval_id`, sample ID (including its type), and epoch.
+Older Inspect logs without `eval_id` use both `run_id` and `task_id`; incomplete
+source identities are rejected. Copies of a
 generation log evaluated by different scorers can be compared; independent
 generation attempts cannot be paired just because their sample IDs match.
 Duplicate metric/observation keys raise `ValueError` rather than being overwritten.
