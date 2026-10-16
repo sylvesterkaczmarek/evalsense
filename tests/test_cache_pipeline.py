@@ -71,7 +71,6 @@ class PipelineCacheTests(unittest.TestCase):
                 Pipeline(exp, project).run(
                     show_progress=False,
                     eval_kwargs={"display": "none", "log_format": "json"},
-                    score_kwargs={"display": "none"},
                 )
 
             first = config("yes")

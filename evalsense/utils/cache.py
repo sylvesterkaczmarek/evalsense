@@ -10,7 +10,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-from inspect_ai.util import registry_info
 from pydantic import BaseModel
 
 
@@ -63,11 +62,18 @@ def _normalise(value: Any, version: str | None) -> Any:
                 "Set its version and bump it when code or external inputs change."
             )
         try:
-            info = registry_info(value)
-            # Inspect's decorators attach construction parameters to the object.
-            # Missing metadata must not fall back to a name-only cache identity.
+            # Inspect's decorators attach registry metadata and construction
+            # parameters. The public registry helpers are absent in older
+            # supported releases, so keep attribute access in this one adapter.
+            info = getattr(value, "__registry_info__", None)
             params = getattr(value, "__registry_params__", None)
-            if not isinstance(params, dict):
+            if (
+                info is None
+                or not isinstance(getattr(info, "name", None), str)
+                or not isinstance(getattr(info, "type", None), str)
+                or not isinstance(getattr(info, "metadata", None), dict)
+                or not isinstance(params, dict)
+            ):
                 raise ValueError("No construction parameters")
         except ValueError:
             if version is None and not module.startswith("evalsense."):
