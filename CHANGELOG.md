@@ -7,16 +7,16 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- None
+- The default QAGS evaluator is now named `QAGS-derived`. Malformed answers, empty question sets and incomplete QA batches raise `QagsValidationError` instead of producing scores. Generated question duplicates are counted once; rerun under a new evaluator name or in a fresh project rather than reusing older cached scores.
 
 ### Enhancements
 - None
 
 ### Bug fixes
-- None
+- Prevent unparseable ternary answers from being scored as matching unknowns, and validate judge comparison responses as complete binary answers.
 
 ### Documentation
-- None
+- Distinguish EvalSense's bidirectional QA agreement protocol from published QAGS in the API, Guide and example notebooks.
 
 ### Miscellaneous
 - None
