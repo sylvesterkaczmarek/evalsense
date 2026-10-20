@@ -212,7 +212,7 @@ class CacheIdentityTests(unittest.TestCase):
         ):
             baseline = get_bertscore_evaluator()
             for params in [
-                {"idf": True},
+                {"batch_size": 1},
                 {"lang": "fr"},
                 {"num_layers": 4},
                 {"rescale_with_baseline": True},
