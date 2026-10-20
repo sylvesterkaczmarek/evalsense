@@ -163,6 +163,20 @@ class PairwiseIdfTests(unittest.TestCase):
                     calculator.calculate(prediction="p", reference="r")
                 self.assertEqual(backend.calls, [])
 
+    def test_idf_requests_in_call_kwargs_are_not_silently_ignored(self):
+        backend = RecordingMetric()
+        with patch(LOAD_METRIC, return_value=backend):
+            calculator = BertScoreCalculator()
+        for value in (True, {}, {42: 1.0}):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "idf=False"),
+            ):
+                calculator.calculate(prediction="p", reference="r", idf=value)
+        self.assertEqual(backend.calls, [])
+        calculator.calculate(prediction="p", reference="r", idf=False)
+        self.assertIs(backend.calls[0]["idf"], False)
+
     def test_backend_errors_are_not_converted_to_scores(self):
         backend = Mock()
         backend.compute.side_effect = RuntimeError("backend failed")
@@ -219,6 +233,22 @@ class AsyncIdfTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, "reference corpus"):
             await calculator.calculate_async(prediction="p", reference="r")
         self.assertEqual(backend.calls, [])
+
+    async def test_async_idf_call_kwargs_are_not_silently_ignored(self):
+        backend = RecordingMetric()
+        with patch(LOAD_METRIC, return_value=backend):
+            calculator = BertScoreCalculator()
+        for value in (True, {}, {42: 1.0}):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "idf=False"),
+            ):
+                await calculator.calculate_async(
+                    prediction="p", reference="r", idf=value
+                )
+        self.assertEqual(backend.calls, [])
+        await calculator.calculate_async(prediction="p", reference="r", idf=False)
+        self.assertIs(backend.calls[0]["idf"], False)
 
     async def test_repeated_and_concurrent_calls_remain_unweighted(self):
         backend = RecordingMetric()

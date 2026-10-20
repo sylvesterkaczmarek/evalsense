@@ -103,6 +103,7 @@ class BertScoreCalculator(ScoreCalculator):
 
         # Configuration is public and may have changed since construction.
         _validate_pairwise_idf(self.idf)
+        _validate_pairwise_idf(kwargs.get("idf", False))
         predictions = [prediction]
         references = [reference]
 
@@ -169,6 +170,8 @@ class BertScoreCalculator(ScoreCalculator):
         Returns:
             Score: Inspect AI Score with the calculated evaluation results.
         """
+        # Generic calculator callers may supply options through kwargs.
+        _validate_pairwise_idf(kwargs.get("idf", False))
         return self.calculate(
             prediction=prediction,
             reference=reference,
