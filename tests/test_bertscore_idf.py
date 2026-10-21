@@ -60,6 +60,14 @@ def task_state(prediction: str = "prediction") -> TaskState:
 
 
 class PairwiseIdfTests(unittest.TestCase):
+    def setUp(self):
+        # This recording backend has no tokenizer; length checks have their own suite.
+        length_check = patch.object(
+            BertScoreCalculator, "_validate_input_lengths", create=True
+        )
+        length_check.start()
+        self.addCleanup(length_check.stop)
+
     def test_automatic_idf_is_rejected_before_metric_loading(self):
         with patch(LOAD_METRIC) as load:
             with self.assertRaisesRegex(ValueError, "reference corpus"):
@@ -208,6 +216,14 @@ class PairwiseIdfTests(unittest.TestCase):
 
 
 class AsyncIdfTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # This recording backend has no tokenizer; length checks have their own suite.
+        length_check = patch.object(
+            BertScoreCalculator, "_validate_input_lengths", create=True
+        )
+        length_check.start()
+        self.addCleanup(length_check.stop)
+
     async def test_async_and_sync_scores_are_identical(self):
         backend = RecordingMetric()
         with patch(LOAD_METRIC, return_value=backend):
@@ -307,6 +323,14 @@ class AsyncIdfTests(unittest.IsolatedAsyncioTestCase):
 
 
 class PipelineIdfTests(unittest.TestCase):
+    def setUp(self):
+        # This recording backend has no tokenizer; length checks have their own suite.
+        length_check = patch.object(
+            BertScoreCalculator, "_validate_input_lengths", create=True
+        )
+        length_check.start()
+        self.addCleanup(length_check.stop)
+
     def test_unweighted_scores_survive_pipeline_and_project_reload(self):
         with (
             tempfile.TemporaryDirectory() as tmp,
