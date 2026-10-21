@@ -7,13 +7,13 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- None
+- BERTScore rejects inputs exceeding the declared tokenizer/model context and models without a finite declared limit, rather than returning scores for truncated text.
 
 ### Enhancements
 - None
 
 ### Bug fixes
-- None
+- Validate prediction and reference token lengths, including special tokens, before BERTScore embedding computation.
 
 ### Documentation
 - None

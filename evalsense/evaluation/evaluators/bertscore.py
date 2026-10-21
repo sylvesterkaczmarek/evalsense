@@ -1,4 +1,5 @@
 import gc
+from numbers import Integral
 from typing import Any, override
 
 import evaluate
@@ -16,8 +17,69 @@ from inspect_ai.util import concurrency
 from evalsense.evaluation import Evaluator, ScoreCalculator
 
 
+class BertScoreLengthError(ValueError):
+    """Input length cannot be scored within the model's declared context."""
+
+
+def _input_limit(tokenizer: Any, config: Any) -> int:
+    # Transformers uses a very large integer when no tokenizer limit is known.
+    from transformers.tokenization_utils_base import LARGE_INTEGER
+
+    limits = [
+        int(value)
+        for value in (
+            getattr(tokenizer, "model_max_length", None),
+            getattr(config, "max_position_embeddings", None),
+            getattr(config, "n_positions", None),
+        )
+        if isinstance(value, Integral)
+        and not isinstance(value, bool)
+        and 0 < int(value) < LARGE_INTEGER
+    ]
+    if not limits:
+        raise BertScoreLengthError(
+            "Cannot determine a finite BERTScore input limit from the tokenizer "
+            "or model configuration. Use a model with a declared context limit "
+            "or a separately validated long-document scorer."
+        )
+    return int(min(limits))
+
+
+def _load_length_context(model_type: str, use_fast_tokenizer: bool) -> tuple[Any, int]:
+    # Use BERTScore's loader, including its SciBERT model-name handling. Imports
+    # stay lazy so importing EvalSense does not require the transformers extra.
+    from bert_score.utils import get_tokenizer
+    from transformers import AutoConfig
+
+    tokenizer = get_tokenizer(model_type, use_fast=use_fast_tokenizer)
+    config = AutoConfig.from_pretrained(tokenizer.name_or_path)
+    return tokenizer, _input_limit(tokenizer, config)
+
+
+def _encoded_length(tokenizer: Any, text: str) -> int:
+    from transformers import GPT2Tokenizer, RobertaTokenizer
+
+    # Match bert_score.utils.sent_encode's stripping, special tokens and prefix
+    # space behavior, but disable truncation so the complete length is visible.
+    text = text.strip()
+    if not text:
+        return len(tokenizer.build_inputs_with_special_tokens([]))
+    kwargs: dict[str, Any] = {
+        "add_special_tokens": True,
+        "truncation": False,
+        "verbose": False,
+    }
+    if isinstance(tokenizer, (GPT2Tokenizer, RobertaTokenizer)):
+        kwargs["add_prefix_space"] = True
+    return len(tokenizer.encode(text, **kwargs))
+
+
 class BertScoreCalculator(ScoreCalculator):
-    """Calculator for computing BERTScores."""
+    """Compute BERTScore only when both complete texts fit the declared context.
+
+    Overlength inputs fail before embedding computation. This calculator does
+    not truncate, segment documents, or redefine BERTScore through chunk averaging.
+    """
 
     def __init__(
         self,
@@ -42,6 +104,27 @@ class BertScoreCalculator(ScoreCalculator):
         self.lang = lang
         self.num_layers = num_layers
         self.idf = idf
+        self._length_context: tuple[str, bool, Any, int] | None = None
+
+    def _validate_input_lengths(
+        self, prediction: str, reference: str, use_fast_tokenizer: bool
+    ) -> None:
+        context = self._length_context
+        if context is None or context[:2] != (self.model_type, use_fast_tokenizer):
+            tokenizer, limit = _load_length_context(self.model_type, use_fast_tokenizer)
+            context = (self.model_type, use_fast_tokenizer, tokenizer, limit)
+            self._length_context = context
+        _, _, tokenizer, limit = context
+        for source, text in (("prediction", prediction), ("reference", reference)):
+            count = _encoded_length(tokenizer, text)
+            if count > limit:
+                # Do not echo clinical text into logs or error messages.
+                raise BertScoreLengthError(
+                    f"BERTScore {source} has {count} tokens including special tokens; "
+                    f"the declared input limit is {limit}. No score was computed. "
+                    "Use a suitable long-context model or an explicitly validated "
+                    "segmentation strategy."
+                )
 
     @override
     def calculate(
@@ -76,6 +159,10 @@ class BertScoreCalculator(ScoreCalculator):
             baseline_path (str, optional): Customized baseline file.
             use_fast_tokenizer (bool): The `use_fast` parameter passed to HF tokenizer.
 
+        Raises:
+            BertScoreLengthError: If either input exceeds the declared context or
+                no finite limit can be determined. No partial score is returned.
+
         Returns:
             Score: Inspect AI Score with the calculated evaluation results.
         """
@@ -84,6 +171,7 @@ class BertScoreCalculator(ScoreCalculator):
                 "Reference is required for computing BERTScore, but was None."
             )
 
+        self._validate_input_lengths(prediction, reference, use_fast_tokenizer)
         predictions = [prediction]
         references = [reference]
 
@@ -147,6 +235,10 @@ class BertScoreCalculator(ScoreCalculator):
             baseline_path (str | None): Customized baseline file.
             use_fast_tokenizer (bool): The `use_fast` parameter passed to HF tokenizer.
 
+        Raises:
+            BertScoreLengthError: If either input exceeds the declared context or
+                no finite limit can be determined. No partial score is returned.
+
         Returns:
             Score: Inspect AI Score with the calculated evaluation results.
         """
@@ -183,6 +275,10 @@ def get_bertscore_evaluator(
 ) -> Evaluator:
     """
     Returns a BERTScore evaluator.
+
+    Both texts must fit the declared tokenizer/model context, including special
+    tokens. Overlength samples raise BertScoreLengthError rather than receiving
+    a score for a truncated prefix.
 
     Args:
         name (str): The name of the evaluator and scorer. Defaults to "BERTScore".
@@ -242,6 +338,7 @@ def get_bertscore_evaluator(
         import torch
 
         del calculator.bertscore_module
+        calculator._length_context = None
         gc.collect()
         torch.cuda.empty_cache()
 
