@@ -84,7 +84,9 @@ def _metric_names(
     if len(set(labels)) != len(labels) or "Metric" in labels:
         raise ValueError(
             "Metric labels are ambiguous or use the reserved name 'Metric'. "
-            "Use distinct evaluator/scorer names and metric labels."
+            "This can also occur when earlier evaluator configurations remain "
+            "in the project under the same names. Use distinct evaluator/scorer "
+            "names and metric labels, or analyse configurations separately."
         )
     return labels
 
