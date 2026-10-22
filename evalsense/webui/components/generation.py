@@ -43,7 +43,7 @@ def generation_tab(state: gr.State):
         info="The number of perturbation tiers to use. Tiers with higher ID numbers should apply progressively more aggressive perturbations to the model outputs.",
         value=state.value["perturbation_tiers"],
         precision=0,
-        minimum=2,
+        minimum=3,
         visible=False,
     )
 
@@ -54,9 +54,9 @@ def generation_tab(state: gr.State):
     def update_is_meta_eval(is_meta: bool, state: AppState):
         state["is_meta_eval"] = is_meta
         # Reset inputs
-        state["perturbation_tiers"] = 2
-        state["perturbation_tier_subprompts"] = []
-        return gr.update(visible=is_meta, value=2), state
+        state["perturbation_tiers"] = 3
+        state["perturbation_tier_subprompts"] = ["", "", ""]
+        return gr.update(visible=is_meta, value=3), state
 
     @num_perturbation_tiers.change(
         inputs=[num_perturbation_tiers, state],

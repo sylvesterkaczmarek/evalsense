@@ -114,6 +114,8 @@ def execute_meta_evaluation(state: AppState):
     Args:
         state (AppState): The current application state.
     """
+    if len(state["perturbation_tier_subprompts"]) < 3:
+        raise ValueError("Meta-evaluation requires at least three configured tiers.")
     dataset_manager = get_dataset_manager(state)
 
     tasks = []
