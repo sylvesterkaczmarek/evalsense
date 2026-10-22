@@ -45,6 +45,10 @@ class GenerationRecord(BaseModel, frozen=True):
         task_name (str): The name of the task.
         model_record (ModelRecord): The record of the model.
         experiment_name (str | None): The name of the experiment, if applicable.
+        generator_fingerprint (str): Identity of the solver configuration and
+            explicit version. Empty for legacy records without this identity.
+        task_fingerprint (str): Identity of preprocessing and sample field mapping.
+            Empty for legacy records without this identity.
     """
 
     dataset_record: DatasetRecord
@@ -62,6 +66,9 @@ class GenerationRecord(BaseModel, frozen=True):
 
         Args:
             evaluator_name (str): The name of the evaluator.
+            evaluator_fingerprint (str): Identity of the evaluator configuration,
+                including its judge settings and explicit version. Defaults to
+                an empty string for legacy/manual records without a fingerprint.
 
         Returns:
             EvaluationRecord: The evaluation record.
@@ -163,7 +170,14 @@ class EvaluationRecord(GenerationRecord, frozen=True):
         task_name (str): The name of the task.
         model_record (ModelRecord): The record of the model.
         experiment_name (str | None): The name of the experiment, if applicable.
+        generator_fingerprint (str): Identity of the solver configuration and
+            explicit version. Empty for legacy records without this identity.
+        task_fingerprint (str): Identity of preprocessing and sample field mapping.
+            Empty for legacy records without this identity.
         evaluator_name (str): The name of the evaluator.
+        evaluator_fingerprint (str): Identity of the evaluator configuration,
+            including its judge settings and explicit version. Empty for legacy
+            records without this identity.
     """
 
     evaluator_name: str
@@ -282,7 +296,14 @@ class MetaTierGroupedRecord(EvaluationRecord, frozen=True):
         task_name (str): The name of the task.
         model_record (ModelRecord): The record of the model.
         experiment_name (str | None): The name of the experiment, if applicable.
+        generator_fingerprint (str): Empty when grouping across tier generators;
+            otherwise the solver configuration and explicit version identity.
+        task_fingerprint (str): Identity of preprocessing and sample field mapping.
+            Empty for legacy records without this identity.
         evaluator_name (str): The name of the evaluator.
+        evaluator_fingerprint (str): Identity of the evaluator configuration,
+            including its judge settings and explicit version. Empty for legacy
+            records without this identity.
         metric_name (str): The name of the metric being evaluated.
     """
 

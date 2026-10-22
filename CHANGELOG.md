@@ -16,7 +16,7 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - None
 
 ### Documentation
-- None
+- Add result-management guidance, notebook cache notes and fingerprint field documentation.
 
 ### Miscellaneous
 - None
