@@ -16,7 +16,7 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - Pair metric correlations by generation, source run, sample and epoch; reject duplicate observations, preserve scorer identities and report finite-pair counts.
 
 ### Documentation
-- None
+- Restore correlation analyser argument documentation and consolidate pairing, count and label guidance in the API docstrings.
 
 ### Miscellaneous
 - None

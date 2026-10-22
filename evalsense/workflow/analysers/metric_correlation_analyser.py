@@ -31,9 +31,14 @@ type MetricKey = tuple[str, str, str | None]
 class CorrelationResults[T: pl.DataFrame | pd.DataFrame | npt.NDArray[np.float64]]:
     """Correlation matrices and counts, with the same metric order in each table.
 
-    ``paired_counts`` counts finite, identity-matched observations. ``excluded_counts``
-    counts identity-matched pairs excluded because either score is non-finite.
-    Unmatched observations are not included in either count.
+    Attributes:
+        correlation_matrix (T): Pairwise coefficients in the requested output format.
+        figure (Figure | None): Correlation plot, or None when no plot was produced.
+        paired_counts (T | None): Number of finite, identity-matched observations
+            used for each coefficient. Populated by MetricCorrelationAnalyser.
+        excluded_counts (T | None): Number of identity-matched pairs excluded
+            because either score is non-finite. Unmatched observations are not
+            included in either count. Populated by MetricCorrelationAnalyser.
     """
 
     correlation_matrix: T
@@ -97,9 +102,25 @@ def _matrix(values: list[list], names: list[str], dtype: pl.DataType) -> pl.Data
 class MetricCorrelationAnalyser[T: CorrelationResults](ResultAnalyser[T]):
     """Correlate scores on the same generated observations.
 
-    Pairing uses the full generation record, the source Inspect eval ID, sample ID
-    (including its type), and epoch. Evaluator/scorer identity is kept separately
-    so different evaluators can be compared on the same generation.
+    Pairing uses the full generation record, source Inspect ``eval_id``, sample ID
+    (including its type), and epoch. Older logs without ``eval_id`` require both
+    ``run_id`` and ``task_id``. Copies of the same generation can be compared across
+    evaluators; independent generation attempts are not paired by sample ID alone.
+
+    Evaluator, scorer and inner-metric identities remain separate from display
+    labels. Names are qualified when needed; ambiguous labels raise ValueError
+    rather than merge distinct metrics. Retained evaluator configurations can
+    share display names even when their identities differ.
+
+    Non-finite scores are excluded pairwise and counted. Fewer than two finite
+    pairs or a constant vector produces NaN, including on the diagonal. Pairwise
+    exclusion does not establish unbiased missingness; these are descriptive
+    correlations without confidence estimates.
+
+    All tables use the same metric order and requested output format. The first
+    column, ``Metric``, contains row labels, including in NumPy output. Empty
+    selections return empty tables and no figure. See CorrelationResults for the
+    definitions of ``paired_counts`` and ``excluded_counts``.
     """
 
     def __init__(
@@ -107,6 +128,16 @@ class MetricCorrelationAnalyser[T: CorrelationResults](ResultAnalyser[T]):
         name: str = "MetricCorrelationAnalyser",
         output_format: Literal["polars", "pandas", "numpy"] = "polars",
     ):
+        """Initialise the metric correlation analyser.
+
+        Args:
+            name (str): Analyser name. Defaults to "MetricCorrelationAnalyser".
+            output_format (Literal["polars", "pandas", "numpy"]): Format of all
+                result tables. Defaults to "polars".
+
+        Raises:
+            ValueError: If output_format is unsupported.
+        """
         super().__init__(name=name)
         if output_format not in OUTPUT_FORMATTERS:
             raise ValueError(
@@ -128,14 +159,32 @@ class MetricCorrelationAnalyser[T: CorrelationResults](ResultAnalyser[T]):
     ) -> T:
         """Calculate pairwise correlations after joining observation identities.
 
-        ``method_filter_fun`` receives original scalar scorer names or inner metric
-        names. ``metric_labels`` changes presentation only; ambiguous labels raise
-        ValueError. Inner names remain unqualified when they identify one metric.
+        Args:
+            project (Project): Project containing the successful evaluation logs
+                to analyse.
+            corr_method (Literal["spearman", "pearson"]): Correlation method.
+                Defaults to "spearman".
+            return_plot (bool): Whether to include a correlation plot when metrics
+                are selected. Defaults to True.
+            figsize (tuple[int, int]): Plot dimensions. Defaults to (12, 10).
+            metric_labels (dict[str, str] | None): Map original scalar scorer names
+                or inner metric names to display aliases in all tables and the
+                plot. Aliases do not change observation identity. Defaults to None.
+            method_filter_fun (Callable[[str], bool]): Include a numeric metric
+                when this function returns True for its original scalar scorer
+                name or inner metric name, before aliasing. Defaults to including
+                all numeric metrics.
+            **kwargs (dict): Additional analyser-interface arguments. Unused.
 
-        Duplicate metric/observation keys raise ValueError, even for equal scores.
-        Non-finite scores are excluded pairwise and counted. Fewer than two finite
-        pairs or a constant vector produces NaN, including on the diagonal.
-        Empty selections return empty tables and no figure.
+        Returns:
+            T: CorrelationResults containing correlation_matrix, paired_counts and
+                excluded_counts in the requested output format, and an optional
+                figure. Empty selections produce empty tables and no figure.
+
+        Raises:
+            ValueError: If corr_method is unsupported, source identity is missing,
+                a metric/observation key is duplicated (even with equal scores),
+                or display labels are ambiguous or use the reserved name "Metric".
         """
         if corr_method not in ("spearman", "pearson"):
             raise ValueError("corr_method must be 'spearman' or 'pearson'.")
