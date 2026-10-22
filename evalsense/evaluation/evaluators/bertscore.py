@@ -224,15 +224,17 @@ def get_bertscore_evaluator(
         "model_type": model_type,
         "lang": lang,
         "num_layers": num_layers,
-        "verbose": verbose,
         "idf": idf,
         "device": device,
         "batch_size": batch_size,
-        "nthreads": nthreads,
         "rescale_with_baseline": rescale_with_baseline,
         "baseline_path": baseline_path,
         "use_fast_tokenizer": use_fast_tokenizer,
     }
+    # Progress logging never changes scores. IDF worker count is irrelevant when
+    # IDF is disabled; device and batch size still identify numerical execution.
+    if idf is not False:
+        cache_parameters["nthreads"] = nthreads
     if metrics is None:
         metrics = [
             {"BERTScore Precision": [mean()]},

@@ -7,7 +7,21 @@ from inspect_ai.dataset import Dataset, FieldSpec, RecordToSample, json_dataset
 from evalsense.datasets.dataset_manager import DatasetManager
 from evalsense.utils.huggingface import disable_dataset_progress_bars
 from evalsense.utils.files import to_safe_filename
-from evalsense.utils.cache import fingerprint
+from evalsense.utils.cache import CacheIdentityError, fingerprint
+
+
+def _dataset_fingerprint(hf_dataset: datasets.Dataset) -> str:
+    """Read the upstream dataset-state fingerprint through one checked boundary."""
+    # Hugging Face documents _fingerprint as its cache identity. Keep access here
+    # so an upstream API change cannot fall back to a name-only identity.
+    value = getattr(hf_dataset, "_fingerprint", None)
+    if not isinstance(value, str) or not value.strip():
+        raise CacheIdentityError(
+            "Dataset fingerprint is missing or invalid; cannot identify "
+            "preprocessed data safely. Reload the dataset using a supported "
+            "datasets version."
+        )
+    return value
 
 
 class TaskPreprocessingFunction(Protocol):
@@ -94,7 +108,7 @@ class TaskPreprocessor:
         data_key = fingerprint(
             {
                 "dataset": dataset_manager.record,
-                "content": hf_dataset._fingerprint,
+                "content": _dataset_fingerprint(hf_dataset),
                 "preprocessor": self.cache_key,
             }
         )

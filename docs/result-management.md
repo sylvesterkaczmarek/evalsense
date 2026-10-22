@@ -49,20 +49,29 @@ is otherwise unchanged. This is conservative: a version number alone does not
 establish that two implementations produce equivalent results. Other dependencies
 and external inputs still require the explicit versioning described above.
 
-BERTScore's `device` and `batch_size` remain part of its identity. Different devices
-and batch shapes are not guaranteed to produce bitwise-identical results; this
-policy does not treat them as interchangeable execution environments.
+BERTScore's `verbose` setting does not affect its cache identity. When `idf=False`,
+`nthreads` is also excluded because no IDF preparation is performed. Both options
+are still passed to the calculator.
+
+BERTScore's `device` and `batch_size` remain part of its identity. PyTorch does not
+[guarantee bitwise-identical results across devices and batch shapes](https://docs.pytorch.org/docs/2.10/notes/numerical_accuracy.html).
+This policy does not treat those execution settings as interchangeable.
 
 ## Preprocessed data
 
-Preprocessed JSON files are keyed by the dataset record, Hugging Face content
+Preprocessed JSON files are keyed by the dataset record, Hugging Face dataset-state
 fingerprint, and preprocessing identity. Mapping from JSON records to Inspect
 samples happens afterwards; changes to that mapping invalidate generation, not
 the intermediate JSON.
 
+The dataset fingerprint comes from Hugging Face's
+[documented cache mechanism](https://huggingface.co/docs/datasets/v3.4.1/about_cache#fingerprint).
+Access is isolated in one helper. Missing, blank or non-string fingerprints raise
+`CacheIdentityError` before reading or writing a task cache; there is no name-only
+fallback. Valid fingerprints retain the existing task-cache paths.
+
 ## Existing projects
 
-Legacy project records and logs remain readable, but old
-name-only cache entries are not reused by newly configured experiments. Keep a
+Legacy project records and logs remain readable, but old name-only cache entries are not reused by newly configured experiments. Keep a
 backup before using a project with older EvalSense releases, which do not know
 about these identity fields.
