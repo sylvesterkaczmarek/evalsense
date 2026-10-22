@@ -7,16 +7,18 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- None
+- Meta-evaluation now requires an explicit complete set of at least three tier IDs. Results are separated by experiment/scorer identity, with exclusion counts and bootstrap intervals. Duplicate observations and mixed epochs are rejected.
 
 ### Enhancements
 - None
 
 ### Bug fixes
-- None
+- Prevent incomplete two-tier and undefined meta-evaluation correlations from silently inflating the reported mean. Report failed/missing logs and unestimable intervals.
 
 ### Documentation
-- None
+- Distinguish intended perturbations from independently checked severity in meta-evaluation results and the example notebook. Document conditional uncertainty and sample-manifest requirements.
+
+  Existing logs are unchanged. Update analyser calls to pass the planned `expected_tiers` and the correct tier direction. Review all exclusion counts and `ci_status`; old two-column tables and pooled averages are not directly comparable. The web UI requires the original tier IDs when loading meta-evaluation results. Independent severity review remains an external step; the analyser can require review flags but does not create or verify them.
 
 ### Miscellaneous
 - None
