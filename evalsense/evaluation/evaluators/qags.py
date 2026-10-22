@@ -1,5 +1,4 @@
 from abc import abstractmethod
-import re
 import unicodedata
 from typing import Any, Literal, Protocol, override
 
@@ -21,7 +20,11 @@ from evalsense.evaluation import (
 )
 from evalsense.generation import ModelConfig
 from evalsense.logging import get_logger
-from evalsense.utils.text import extract_weighted_binary_answer
+from evalsense.utils.text import (
+    extract_weighted_binary_answer,
+    parse_ternary_answer,
+    strip_list_prefix,
+)
 
 logger = get_logger(__name__)
 
@@ -35,18 +38,10 @@ class QagsValidationError(ValueError):
 
 def _parse_answer(text: str, *, binary_only: bool = False) -> bool | None:
     """Parse one complete answer, keeping explicit unknown separate from failure."""
-    answer = " ".join(text.strip().casefold().split()).replace("’", "'")
-    match = re.fullmatch(r"(yes|no|true|false|unknown|i don't know)[.!]?", answer)
-    if match is None:
-        raise QagsValidationError("Expected a complete yes/no/unknown answer.")
-    label = match.group(1)
-    if label in ("yes", "true"):
-        return True
-    if label in ("no", "false"):
-        return False
-    if binary_only:
-        raise QagsValidationError("A comparison must be yes/no, not unknown.")
-    return None
+    try:
+        return parse_ternary_answer(text, binary_only=binary_only)
+    except ValueError as error:
+        raise QagsValidationError(str(error)) from None
 
 
 def _validate_answers(
@@ -88,8 +83,15 @@ def _parse_answers(answers: list[str], source: str) -> list[bool | None]:
 class QagsConfig(Protocol):
     """Configuration for EvalSense's QAGS-derived QA agreement metric.
 
-    Questions are generated from both texts. This is not the published QAGS
-    protocol; see the evaluator documentation for the differences and limits.
+    EvalSense adapts [Wang et al. (2020)](https://aclanthology.org/2020.acl-main.450/)
+    by generating questions from both texts and supporting ternary, exact-match
+    and LLM-judge comparisons. It does not use the original answer-conditioned
+    question filtering. The [EvalSense paper](https://aclanthology.org/2026.eacl-demo.33/)
+    reports a clinical-note case study and meta-evaluation of the ternary and
+    judge variants. Suitability still depends on the task, prompts and judge.
+
+    Prompts choose whether the comparison uses a reference note or source text;
+    agreement with a reference note does not independently check its source.
     """
 
     answer_comparison_mode: Literal["ternary", "exact", "judge"]
@@ -166,8 +168,13 @@ class QagsConfig(Protocol):
         Constructs the prompt for generating the questions for the model output.
 
         The prompt should instruct the model to generate one question per line,
-        ending in a question mark. Text-identical questions after list-prefix
-        removal and NFC normalisation are scored once across both sources.
+        ending in exactly one question mark and containing a letter or digit.
+        Recognised list prefixes are removed using ``strip_list_prefix``;
+        Unicode is normalised to NFC and surrounding whitespace is trimmed.
+        Text-identical questions are scored once across both sources in their
+        first-occurrence order. Case, internal whitespace, decimals and signed
+        numerical values are preserved. Filtering checks syntax, not relevance.
+        An empty retained set raises QagsValidationError before any QA calls.
 
         Args:
             source (Literal["prediction", "reference"]): The source to use for
@@ -209,8 +216,10 @@ class QagsConfig(Protocol):
                 the model output or the reference output/input when asking
                 the model to answer the question. When `answer_comparison_mode`
                 is set to "ternary", the prompt should instruct the model to
-                answer with only "yes", "no", or "unknown". Explanations or
-                multiple labels fail validation. Otherwise,
+                answer with only "yes", "no", or "unknown". The complete-answer
+                parser also accepts true/false, "I don't know", and a single
+                balanced quote, emphasis or inline-code wrapper. Explanations,
+                multiple labels and nested wrappers fail validation. Otherwise,
                 the model should be instructed to give an answer only without
                 any further comments.
             prediction (str, optional): The model output to evaluate.
@@ -268,8 +277,42 @@ class QagsConfig(Protocol):
 class QagsScoreCalculator(ScoreCalculator):
     """QAGS-derived score calculator with strict answer validation.
 
-    A malformed answer fails the sample rather than becoming an unknown match.
-    Explicit unknown/unknown remains categorical agreement, not factual evidence.
+    Each unique question has equal weight within a document. Both texts must
+    supply exactly one nonempty answer per question in every comparison mode.
+    Raw question outputs, retained questions and their source(s), answer outputs,
+    and counts of candidate, invalid, duplicate and retained question lines are
+    recorded in score metadata. Deduplication is textual, not semantic.
+
+    Ternary and judge-comparison labels use ``parse_ternary_answer`` from
+    ``evalsense.utils.text``. It validates the whole response, allowing one
+    balanced formatting wrapper and optional terminal punctuation. Explicit
+    unknown remains distinct from malformed text; judge comparisons must be
+    binary. Errors are translated to QagsValidationError without echoing text.
+
+    Ternary Accuracy is the fraction of equal labels, including unknown/unknown.
+    Such agreement is not factual evidence. Coverage and Groundedness are the
+    number of yes/yes matches divided by reference yes answers and prediction
+    yes answers, respectively, or zero when the corresponding denominator is
+    empty. These positive-answer ratios depend on question polarity and do not
+    measure all correctly preserved negative facts (see issue #57).
+
+    Exact mode averages case-insensitive, whitespace-trimmed text matches;
+    formatting wrappers are not stripped from free-text answers. Judge mode
+    averages binary comparisons or the existing probability-weighted values.
+    Weighting failures retain the existing logged binary fallback. Judge
+    calibration and log-probability handling are unchanged.
+
+    Invalid or incomplete answers raise QagsValidationError. They are neither
+    counted as unknown nor dropped from the question denominator. There are no
+    automatic format retries. In the current pipeline, a scoring exception marks
+    the affected evaluation as failed; other evaluations may continue. Report
+    failures alongside completed scores.
+
+    Successful scores include ``evaluation_protocol="evalsense.qags-derived.v2"``,
+    comparison mode, question-weighting policy and invalid-answer policy. The
+    factory defaults to mean aggregation across document scores. Changing the
+    validation or question set changes the evaluated protocol; regression tests
+    check implementation behavior, not clinical validity.
     """
 
     _symbol_dict: dict[bool | None, str] = {
@@ -398,8 +441,7 @@ class QagsScoreCalculator(ScoreCalculator):
                 if not line.strip():
                     continue
                 candidate_count += 1
-                question = re.sub(r"^\s*(?:(?:[-*•]|\d+[.)]|\[\d+\])\s+)+", "", line)
-                question = unicodedata.normalize("NFC", question.strip())
+                question = unicodedata.normalize("NFC", strip_list_prefix(line))
                 if (
                     not question.endswith("?")
                     or question.count("?") != 1
@@ -979,10 +1021,10 @@ def get_qags_evaluator(
     """
     Constructs a QAGS-derived evaluator for EvalSense.
 
-    This bidirectional QA agreement metric is not canonical QAGS. Invalid answers
-    raise QagsValidationError; they do not produce a score. For custom names,
-    use a new name when migrating from the previous scoring protocol to avoid
-    reusing cached results. The protocol is also recorded in score metadata.
+    The configured prompts select the two comparison texts and question types.
+    See QagsConfig for the method and QagsScoreCalculator for score definitions,
+    accepted formats and failure behavior. The protocol is recorded in score
+    metadata. Migration requirements are in the changelog.
 
     Args:
         config (QagsConfig): The configuration for the QAGS evaluator.

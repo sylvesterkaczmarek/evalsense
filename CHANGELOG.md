@@ -10,13 +10,24 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - The default QAGS evaluator is now named `QAGS-derived`. Malformed answers, empty question sets and incomplete QA batches raise `QagsValidationError` instead of producing scores. Generated question duplicates are counted once; rerun under a new evaluator name or in a fresh project rather than reusing older cached scores.
 
 ### Enhancements
-- None
+- Accept one balanced quote, Markdown emphasis or inline-code wrapper around a complete QAGS answer. Recognise unspaced question-list prefixes before letters while preserving decimals and signed values. Generic strict parsing is available in `evalsense.utils.text`; legacy extraction utilities remain unchanged.
 
 ### Bug fixes
 - Prevent unparseable ternary answers from being scored as matching unknowns, and validate judge comparison responses as complete binary answers.
 
 ### Documentation
-- Distinguish EvalSense's bidirectional QA agreement protocol from published QAGS in the API, Guide and example notebooks.
+- Describe QAGS behavior in the component docstrings and its uses and limitations in the Guide, with links to the original method and EvalSense's own case study. Align executable notebook selections and labels with the evaluator names.
+
+#### QAGS migration
+
+Keep existing logs as historical results. Use a fresh project or a new evaluator
+name when switching to this protocol, including when overriding the default name.
+With versioned components, also bump the evaluator's explicit version. Update
+filters and column selections for `QAGS-derived` score names. Do not relabel old
+outputs or pool them with new scores without accounting for the changed question
+set and validation. Re-run affected notebook cells; saved outputs have not been
+recomputed. Custom prompts should request complete answers in the documented
+format. Inspect failed evaluations alongside completed scores.
 
 ### Miscellaneous
 - None
