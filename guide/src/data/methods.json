@@ -201,7 +201,7 @@
     "name": "QAGS-derived",
     "type": "method",
     "category": "automated",
-    "description_short": "Bidirectional question-answer agreement using an LLM, derived from QAGS. This variant requires task-specific validation.",
+    "description_short": "Uses questions and answers to help assess factual consistency and missing information in generated text.",
     "description_long_file": "qags.mdx",
     "link_implementation": "https://nhsengland.github.io/evalsense/docs/api-reference/evaluation/evaluators/#evalsense.evaluation.evaluators.QagsScoreCalculator",
     "link_name": "QagsScoreCalculator",
@@ -212,9 +212,9 @@
       { "id": "hallucination", "coverage": "Very Good" },
       { "id": "omissions", "coverage": "Very Good" }
     ],
-    "output_values": "Mean answer agreement between 0 and 1. Ternary accuracy includes explicit unknown/unknown agreement. Coverage and groundedness use matching yes answers relative to reference and prediction yes answers. These are question-dependent proxies, not verified fractions of facts; invalid QA batches fail instead of receiving scores.",
+    "output_values": "Mean answer agreement between 0 and 1; higher values indicate more agreement. Ternary mode also reports coverage and groundedness based on matching yes answers. Scores depend on question wording, and matching unknowns do not establish factual support.",
     "advantages": [
-      "Highlights agreement and disagreement on generated questions.",
+      "Can help locate factual disagreements and missing information for review.",
       "Good interpretability due to question-answer format and ability to highlight mismatches in answers.",
       "Can only use weak references, such as background text/information.",
       "Flexible modes of operation (ternary, exact match, LLM-judged answers).",
@@ -222,7 +222,7 @@
     ],
     "disadvantages": [
       "Performance heavily depends on the quality of the used LLM.",
-      "The original QAGS validation does not validate this variant; question relevance and score interpretation require task-specific checks.",
+      "Results depend on question quality, prompts and the task; check performance on representative examples.",
       "Very computationally expensive due to a large number of LLM inferences."
     ],
     "references": [

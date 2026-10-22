@@ -4,50 +4,50 @@ import ReactMarkdown from "react-markdown";
 import LaTeX from "@site/src/components/LaTeX/LaTeX";
 
 <Typography variant="body2" gutterBottom>
-  EvalSense's QAGS-derived metric measures agreement between answers to questions
-  generated from the evaluated text and a comparison text. It is a configurable
-  adaptation, not an implementation of the published QAGS protocol.
+  QAGS-derived uses questions and answers to help assess factual consistency and
+  missing information in generated text, such as a summary or clinical note.
+  It generates questions from both the evaluated text and a comparison text,
+  answers each question using each text, and compares the answers. Disagreements
+  can point to contradictions, unsupported details or omissions for review.
 </Typography>
 
 <Typography variant="body2" gutterBottom>
-  <Link href="https://aclanthology.org/2020.acl-main.450/">Published QAGS</Link>
-  {" "}generates answer-conditioned questions from a summary and compares
-  answers from that summary and its source. Its question filtering includes an
-  answer-consistency check. EvalSense instead generates questions from both texts
-  and combines them before QA. The validation reported in the original paper does
-  not establish the validity of these variants.
-</Typography>
-
-<Typography variant="body2" gutterBottom>
-  Questions must be on separate lines. List prefixes and surrounding whitespace are removed;
-  malformed lines are filtered and text duplicates are counted once across both
-  lists. This does not verify semantic relevance or factual grounding. Each retained
-  question has equal weight. Raw question outputs, retained-question sources and
-  filtering counts are recorded for review.
+  The comparison text can be a source document or a reference answer, selected
+  through the prompts. Choose it carefully: agreement with a reference answer
+  does not establish that the answer is itself faithful to the original source.
+  Reviewing the questions and answers helps explain individual scores.
 </Typography>
 
 <Typography variant="subtitle1" gutterBottom>
-  Evaluation Modes
+  Evaluation modes
 </Typography>
 
-<Typography variant="body2">
-- **Ternary mode:** Answers must be complete yes/no/unknown labels. Accuracy is the fraction of equal labels, including explicit unknown/unknown pairs. Unknown agreement does not establish factual support. The existing Coverage and Groundedness outputs divide matching yes/yes pairs by reference yes answers and evaluated-text yes answers, respectively. These are question-dependent positive-answer ratios; negative-fact and question-polarity limitations remain.
-- **Exact mode:** Nonempty answers are compared after trimming whitespace and ignoring case. This can penalise semantically equivalent wording.
-- **Judge mode:** An LLM compares nonempty answers with a complete binary response. Scores average those comparisons, optionally using the existing probability weighting. Judge errors and calibration limitations remain.
-</Typography>
-
-<Typography variant="body2" gutterBottom>
-  Unparseable ternary or judge-comparison responses raise an error instead of being
-  treated as unknown or excluded from the denominator. Empty question sets, empty
-  answers and incomplete QA batches also fail. Configure prompts to return only
-  the requested answer. Report failed evaluations alongside completed scores.
+<Typography variant="body2" component="div">
+  <ReactMarkdown>{`
+- **Ternary mode:** Uses yes/no/unknown questions, making answer comparisons straightforward. It reports accuracy, coverage and groundedness. The last two focus on matching yes answers and depend on question wording; correctly preserved negative facts may not contribute.
+- **Exact match mode:** Compares open-ended answers as text. It is useful when an answer has a clear expected form, but can penalise equivalent wording.
+- **Judge mode:** Uses an LLM to compare open-ended answers by meaning. It is more flexible about wording but requires additional model calls and depends on the judge's reliability.
+  `}</ReactMarkdown>
 </Typography>
 
 <Typography variant="body2" gutterBottom>
-  The comparison text is chosen by the configured prompts; using a reference note
-  measures agreement with that note, not necessarily factual consistency with the
-  original dialogue. Task-specific validation is required before interpreting
-  these scores as clinical correctness, hallucination detection or risk coverage.
+  This can be useful for checking factual content in summarisation and other
+  open-ended tasks. It requires many model calls, and results depend on the
+  questions, prompts and evaluator model. Matching unknown answers does not
+  establish factual support. Invalid answers fail evaluation rather than being
+  counted as agreement, so review failures alongside scores. These scores are
+  aids to evaluation, not verified fractions of facts or proof of clinical safety.
+</Typography>
+
+<Typography variant="body2" gutterBottom>
+  EvalSense adapts <Link href="https://aclanthology.org/2020.acl-main.450/">QAGS</Link>
+  {" "}to bidirectional question generation and these comparison modes. The
+  {" "}<Link href="https://aclanthology.org/2026.eacl-demo.33/">EvalSense paper</Link>
+  {" "}reports its own clinical-note case study and perturbation-based
+  meta-evaluation of ternary and judge variants. Check performance on
+  representative examples for your task and configuration. The
+  {" "}<Link href="https://nhsengland.github.io/evalsense/docs/api-reference/evaluation/evaluators/#evalsense.evaluation.evaluators.QagsScoreCalculator">API documentation</Link>
+  {" "}covers score definitions and accepted input formats.
 </Typography>
 
 <Typography variant="subtitle1" gutterBottom>
