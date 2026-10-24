@@ -7,7 +7,7 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- BERTScore rejects inputs exceeding the declared tokenizer/model context and models without a finite declared limit, rather than returning scores for truncated text.
+- BERTScore rejects inputs exceeding a declared tokenizer/model limit or whose length capability cannot be determined, rather than returning scores for truncated text. XLNet's explicit no-fixed-limit declaration is supported; finite tokenizer limits still apply.
 
 ### Enhancements
 - None
@@ -16,7 +16,9 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - Validate prediction and reference token lengths, including special tokens, before BERTScore embedding computation.
 
 ### Documentation
-- None
+- Document the BERTScore length policy and XLNet tokenizer constraints in the component docstrings.
+
+  Existing cached results are not repaired or revalidated. Use a fresh project or a new evaluator name when applying this policy to previously scored data; with versioned components, also update their version. Preserve original logs as historical results. The pipeline records length-check failures instead of successful prefix-only scores.
 
 ### Miscellaneous
 - None
