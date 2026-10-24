@@ -135,6 +135,52 @@ class NativeLengthTests(unittest.TestCase):
             ):
                 _input_limit(SimpleNamespace(model_max_length=value), SimpleNamespace())
 
+    def test_xlnet_explicitly_declares_no_fixed_position_limit(self):
+        from transformers import XLNetConfig
+        from transformers.tokenization_utils_base import VERY_LARGE_INTEGER
+
+        config = XLNetConfig()
+        self.assertEqual(config.max_position_embeddings, -1)
+        self.assertIsNone(
+            _input_limit(SimpleNamespace(model_max_length=VERY_LARGE_INTEGER), config)
+        )
+
+    def test_xlnet_still_honours_a_finite_tokenizer_limit(self):
+        from transformers import XLNetConfig
+
+        for limit in (8, 512, 4096):
+            with self.subTest(limit=limit):
+                self.assertEqual(
+                    _input_limit(
+                        SimpleNamespace(model_max_length=limit), XLNetConfig()
+                    ),
+                    limit,
+                )
+
+    def test_no_limit_sentinel_requires_a_known_architecture(self):
+        from transformers import BertConfig
+        from transformers.tokenization_utils_base import VERY_LARGE_INTEGER
+
+        for config in (
+            SimpleNamespace(max_position_embeddings=-1),
+            SimpleNamespace(model_type="xlnet", max_position_embeddings=-1),
+            BertConfig(max_position_embeddings=-1),
+        ):
+            with (
+                self.subTest(config=type(config).__name__),
+                self.assertRaises(ValueError),
+            ):
+                _input_limit(
+                    SimpleNamespace(model_max_length=VERY_LARGE_INTEGER), config
+                )
+
+    def test_xlnet_does_not_treat_invalid_tokenizer_limits_as_unbounded(self):
+        from transformers import XLNetConfig
+
+        for value in (None, True, 0, -1, "unlimited", float("inf")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _input_limit(SimpleNamespace(model_max_length=value), XLNetConfig())
+
     def test_model_config_is_used_when_tokenizer_has_no_finite_limit(self):
         from transformers import AutoTokenizer
 
@@ -273,6 +319,183 @@ class NativeLengthTests(unittest.TestCase):
         self.assertEqual(score.metadata, {"hashcode": native.hash})
         self.assertEqual(seen[0]["predictions"], [prediction])
         self.assertEqual(seen[0]["references"], [reference])
+
+
+@unittest.skipUnless(
+    EXTRAS and importlib.util.find_spec("sentencepiece"),
+    "XLNet tokenizer test dependency not installed",
+)
+class NativeXLNetLengthTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import sentencepiece as spm
+        import torch
+        from transformers import XLNetConfig, XLNetModel, XLNetTokenizer
+
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.path = Path(cls.tmp.name)
+        corpus = cls.path / "corpus.txt"
+        corpus.write_text(
+            "patient has pain fever no medicine left right arm hand.\n" * 20
+        )
+        cast(Any, spm.SentencePieceTrainer).train(
+            input=str(corpus),
+            model_prefix=str(cls.path / "spiece"),
+            vocab_size=48,
+            hard_vocab_limit=False,
+            model_type="unigram",
+            bos_id=1,
+            eos_id=2,
+            unk_id=0,
+            pad_id=5,
+            user_defined_symbols=["<cls>", "<sep>", "<mask>"],
+            shuffle_input_sentence=False,
+            num_threads=1,
+            minloglevel=2,
+        )
+        tokenizer = XLNetTokenizer(vocab_file=str(cls.path / "spiece.model"))
+        tokenizer.save_pretrained(cls.path)
+        pad_token_id = tokenizer.pad_token_id
+        assert isinstance(pad_token_id, int)
+        with torch.random.fork_rng():
+            torch.manual_seed(0)
+            model = XLNetModel(
+                XLNetConfig(
+                    vocab_size=len(tokenizer),
+                    d_model=8,
+                    n_layer=1,
+                    n_head=2,
+                    d_inner=16,
+                    dropout=0,
+                    mem_len=0,
+                    use_mems_eval=False,
+                    pad_token_id=pad_token_id,
+                )
+            )
+            model.save_pretrained(cls.path)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_native_xlnet_scores_full_text_beyond_512_tokens(self):
+        from bert_score import BERTScorer
+        from bert_score.utils import sent_encode
+        from torch import Tensor
+
+        tokenizer, limit = _load_length_context(str(self.path), False)
+        self.assertIsNone(limit)
+        tokens_per_word = len(tokenizer.encode("patient", add_special_tokens=False))
+        prediction = "patient " * (512 // tokens_per_word + 1) + "pain"
+        reference = prediction + " fever"
+        self.assertGreater(_encoded_length(tokenizer, prediction), 512)
+        self.assertEqual(
+            _encoded_length(tokenizer, reference),
+            len(sent_encode(tokenizer, reference)),
+        )
+        native = BERTScorer(
+            model_type=str(self.path), num_layers=1, device="cpu", idf=False
+        )
+        calls = []
+        lengths = []
+        handle = native._model.register_forward_pre_hook(
+            lambda _, args: lengths.append(args[0].shape[1])
+        )
+        self.addCleanup(handle.remove)
+
+        def compute(**kwargs: Any) -> dict[str, Any]:
+            calls.append(kwargs)
+            p, r, f = cast(
+                tuple[Tensor, Tensor, Tensor],
+                native.score(kwargs["predictions"], kwargs["references"]),
+            )
+            return {
+                "precision": p.tolist(),
+                "recall": r.tolist(),
+                "f1": f.tolist(),
+                "hashcode": native.hash,
+            }
+
+        metric = Mock(compute=Mock(side_effect=compute))
+        with patch(
+            "evalsense.evaluation.evaluators.bertscore.evaluate.load",
+            return_value=metric,
+        ):
+            calculator = BertScoreCalculator(model_type=str(self.path), num_layers=1)
+        p, r, f = cast(
+            tuple[Tensor, Tensor, Tensor], native.score([prediction], [reference])
+        )
+        result = calculator.calculate(
+            prediction=prediction, reference=reference, device="cpu"
+        )
+        self.assertEqual(
+            result.value,
+            {
+                "BERTScore Precision": float(p.item()),
+                "BERTScore Recall": float(r.item()),
+                "BERTScore F1": float(f.item()),
+            },
+        )
+        self.assertEqual(result.metadata, {"hashcode": native.hash})
+        self.assertEqual(calls[0]["predictions"], [prediction])
+        self.assertEqual(calls[0]["references"], [reference])
+        self.assertTrue(lengths)
+        self.assertTrue(
+            all(length == _encoded_length(tokenizer, reference) for length in lengths)
+        )
+
+    def test_finite_xlnet_tokenizer_still_rejects_overlength_inputs(self):
+        from transformers import AutoTokenizer
+
+        for fast in (False, True):
+            with self.subTest(fast=fast):
+                if fast:
+                    from tokenizers import Tokenizer, models, pre_tokenizers, processors
+                    from transformers import XLNetTokenizerFast
+
+                    vocab = {
+                        "<unk>": 0,
+                        "<s>": 1,
+                        "</s>": 2,
+                        "<cls>": 3,
+                        "<sep>": 4,
+                        "<pad>": 5,
+                        "<mask>": 6,
+                        "patient": 7,
+                        "pain": 8,
+                    }
+                    backend = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+                    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+                    backend.post_processor = processors.TemplateProcessing(
+                        single="$A <sep> <cls>",
+                        special_tokens=[("<sep>", 4), ("<cls>", 3)],
+                    )
+                    tokenizer = XLNetTokenizerFast(
+                        tokenizer_object=backend,
+                        name_or_path=str(self.path),
+                        model_max_length=8,
+                    )
+                else:
+                    tokenizer = AutoTokenizer.from_pretrained(self.path, use_fast=False)
+                    tokenizer.model_max_length = 8
+                metric = Mock()
+                with (
+                    patch("bert_score.utils.get_tokenizer", return_value=tokenizer),
+                    patch(
+                        "evalsense.evaluation.evaluators.bertscore.evaluate.load",
+                        return_value=metric,
+                    ),
+                ):
+                    calculator = BertScoreCalculator(
+                        model_type=str(self.path), num_layers=1
+                    )
+                    with self.assertRaisesRegex(ValueError, "limit is 8"):
+                        calculator.calculate(
+                            prediction="patient " * 20,
+                            reference="pain",
+                            use_fast_tokenizer=fast,
+                        )
+                metric.compute.assert_not_called()
 
 
 if __name__ == "__main__":

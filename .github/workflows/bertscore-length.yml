@@ -19,5 +19,7 @@ jobs:
           python-version: "3.12"
       - name: Install locked transformer dependencies
         run: uv sync --frozen --no-dev --extra transformers --python 3.12
-      - name: Test with local tokenizers and a tiny BERT
+      - name: Install offline XLNet tokenizer test dependency
+        run: uv pip install 'sentencepiece==0.2.1'
+      - name: Test with local tokenizers and tiny BERT/XLNet models
         run: uv run --no-sync python -m unittest discover -s tests -p 'test_bertscore_length_backend.py' -v

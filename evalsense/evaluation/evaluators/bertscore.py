@@ -21,8 +21,10 @@ class BertScoreLengthError(ValueError):
     """Input length cannot be scored within the model's declared context."""
 
 
-def _input_limit(tokenizer: Any, config: Any) -> int:
+def _input_limit(tokenizer: Any, config: Any) -> int | None:
+    """Return a finite bound, or None for XLNet's explicit no-fixed-limit case."""
     # Transformers uses a very large integer when no tokenizer limit is known.
+    from transformers import XLNetConfig
     from transformers.tokenization_utils_base import LARGE_INTEGER
 
     limits = [
@@ -36,16 +38,29 @@ def _input_limit(tokenizer: Any, config: Any) -> int:
         and not isinstance(value, bool)
         and 0 < int(value) < LARGE_INTEGER
     ]
-    if not limits:
-        raise BertScoreLengthError(
-            "Cannot determine a finite BERTScore input limit from the tokenizer "
-            "or model configuration. Use a model with a declared context limit "
-            "or a separately validated long-document scorer."
-        )
-    return int(min(limits))
+    if limits:
+        return int(min(limits))
+    tokenizer_limit = getattr(tokenizer, "model_max_length", None)
+    # XLNet explicitly declares -1 rather than an absent/unknown position limit.
+    # A tokenizer sentinel alone must not disable checks for other architectures.
+    if (
+        isinstance(config, XLNetConfig)
+        and config.max_position_embeddings == -1
+        and isinstance(tokenizer_limit, Integral)
+        and not isinstance(tokenizer_limit, bool)
+        and int(tokenizer_limit) >= LARGE_INTEGER
+    ):
+        return None
+    raise BertScoreLengthError(
+        "Cannot determine a finite BERTScore input limit or a supported explicit "
+        "no-fixed-limit declaration. Use a model with a declared context limit "
+        "or a supported XLNet configuration; validate long-input suitability separately."
+    )
 
 
-def _load_length_context(model_type: str, use_fast_tokenizer: bool) -> tuple[Any, int]:
+def _load_length_context(
+    model_type: str, use_fast_tokenizer: bool
+) -> tuple[Any, int | None]:
     # Use BERTScore's loader, including its SciBERT model-name handling. Imports
     # stay lazy so importing EvalSense does not require the transformers extra.
     from bert_score.utils import get_tokenizer
@@ -75,10 +90,30 @@ def _encoded_length(tokenizer: Any, text: str) -> int:
 
 
 class BertScoreCalculator(ScoreCalculator):
-    """Compute BERTScore only when both complete texts fit the declared context.
+    """Compute BERTScore without silently discarding tokens from either text.
 
-    Overlength inputs fail before embedding computation. This calculator does
-    not truncate, segment documents, or redefine BERTScore through chunk averaging.
+    Prediction and reference lengths are checked separately, including special
+    tokens, before embedding computation. Counting follows BERTScore's tokenizer,
+    surrounding-whitespace and prefix-space handling with truncation disabled.
+    The smallest finite tokenizer/configuration limit applies. Overlength inputs
+    raise BertScoreLengthError with counts, never the input text or a partial score.
+
+    XLNet explicitly declares no fixed positional limit. When its tokenizer also
+    has no finite bound, the complete inputs are passed to BERTScore without an
+    arbitrary cap. A finite tokenizer limit still applies. Missing declarations
+    in other configurations remain errors; a large tokenizer sentinel alone is
+    not evidence that the model supports arbitrary lengths.
+
+    Use the default slow tokenizer for unbounded XLNet with BERTScore 0.3.13:
+    that backend passes the large length sentinel to fast tokenizers, which can
+    overflow. Tokenizer/backend errors propagate without producing a score.
+    No fixed positional limit does not guarantee enough memory or reliable
+    long-document scores; validate the chosen model on the intended task.
+
+    Within-limit scores and hash metadata are unchanged. The validation context
+    is loaded lazily, keeps only the current model/tokenizer setting, and is reset
+    on cleanup. This calculator does not truncate, segment documents or average
+    chunk scores. Increasing batch_size does not extend the context limit.
     """
 
     def __init__(
@@ -104,7 +139,7 @@ class BertScoreCalculator(ScoreCalculator):
         self.lang = lang
         self.num_layers = num_layers
         self.idf = idf
-        self._length_context: tuple[str, bool, Any, int] | None = None
+        self._length_context: tuple[str, bool, Any, int | None] | None = None
 
     def _validate_input_lengths(
         self, prediction: str, reference: str, use_fast_tokenizer: bool
@@ -117,7 +152,7 @@ class BertScoreCalculator(ScoreCalculator):
         _, _, tokenizer, limit = context
         for source, text in (("prediction", prediction), ("reference", reference)):
             count = _encoded_length(tokenizer, text)
-            if count > limit:
+            if limit is not None and count > limit:
                 # Do not echo clinical text into logs or error messages.
                 raise BertScoreLengthError(
                     f"BERTScore {source} has {count} tokens including special tokens; "
@@ -161,7 +196,8 @@ class BertScoreCalculator(ScoreCalculator):
 
         Raises:
             BertScoreLengthError: If either input exceeds the declared context or
-                no finite limit can be determined. No partial score is returned.
+                its length capability is unknown. XLNet's explicit no-fixed-limit
+                declaration is supported. No partial score is returned.
 
         Returns:
             Score: Inspect AI Score with the calculated evaluation results.
@@ -237,7 +273,8 @@ class BertScoreCalculator(ScoreCalculator):
 
         Raises:
             BertScoreLengthError: If either input exceeds the declared context or
-                no finite limit can be determined. No partial score is returned.
+                its length capability is unknown. XLNet's explicit no-fixed-limit
+                declaration is supported. No partial score is returned.
 
         Returns:
             Score: Inspect AI Score with the calculated evaluation results.
@@ -276,9 +313,10 @@ def get_bertscore_evaluator(
     """
     Returns a BERTScore evaluator.
 
-    Both texts must fit the declared tokenizer/model context, including special
-    tokens. Overlength samples raise BertScoreLengthError rather than receiving
-    a score for a truncated prefix.
+    Both texts are checked against any finite tokenizer/model limit, including
+    special tokens. XLNet's explicit no-fixed-limit declaration is supported;
+    unknown configurations still fail. See BertScoreCalculator for the length
+    policy and backend constraints. No automatic truncation is performed.
 
     Args:
         name (str): The name of the evaluator and scorer. Defaults to "BERTScore".

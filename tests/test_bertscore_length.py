@@ -240,6 +240,31 @@ class LengthPolicyTests(unittest.TestCase):
         self.assertEqual(self.load.call_count, 2)
         self.assertEqual(len(self.backend.calls), 1)
 
+    def test_declared_unbounded_context_preserves_complete_inputs(self):
+        self.context.return_value = (object(), None)
+        calculator = BertScoreCalculator(model_type="xlnet-base-cased")
+        text = "word " * 600
+        for result in (
+            calculator.calculate(prediction=text, reference=text),
+            asyncio.run(calculator.calculate_async(prediction=text, reference=text)),
+        ):
+            self.assertEqual(result.metadata, {"hashcode": "fixture"})
+            self.assertEqual(result.answer, text)
+        self.assertEqual(len(self.backend.calls), 2)
+        for call in self.backend.calls:
+            self.assertEqual(call["predictions"], [text])
+            self.assertEqual(call["references"], [text])
+        self.assertEqual(self.context.call_count, 1)
+
+    def test_unbounded_context_does_not_disable_checks_after_model_change(self):
+        self.context.side_effect = [(object(), None), (object(), 8)]
+        calculator = BertScoreCalculator(model_type="xlnet-base-cased")
+        calculator.calculate(prediction="word " * 9, reference="short")
+        calculator.model_type = "finite-model"
+        with self.assertRaisesRegex(ValueError, "limit is 8"):
+            calculator.calculate(prediction="word " * 9, reference="short")
+        self.assertEqual(len(self.backend.calls), 1)
+
     def test_public_error_type_can_be_caught_separately(self):
         from evalsense.evaluation.evaluators import BertScoreLengthError
 
