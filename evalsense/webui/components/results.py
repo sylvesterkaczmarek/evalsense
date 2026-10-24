@@ -86,7 +86,7 @@ def results_tab(state: gr.State):
         )
         expected_meta_tiers_input = gr.Textbox(
             label="Expected meta-evaluation tiers",
-            info="Enter all planned tier IDs, for example 0, 1, 2. Do not infer the set from successful results. At least three tiers are required.",
+            info="Enter all planned tier IDs, for example 0, 1, 2. Do not infer the set from successful results. At least two tiers are required; two-tier designs report pairwise ordering.",
             value="",
             visible=False,
         )
@@ -94,6 +94,8 @@ def results_tab(state: gr.State):
             "These correlations describe agreement with intended perturbation tiers. "
             "They do not verify realised severity or establish evaluator validity. "
             "Review exclusions and confidence-interval status before comparing results. "
+            "For two tiers, pairwise_accuracy excludes ties (n_constant); interval "
+            "limits are on the avg_correlation scale. "
             "Counts cover IDs present in available logs; use the Python API with a "
             "sample manifest to count samples missing from every log.",
             visible=False,

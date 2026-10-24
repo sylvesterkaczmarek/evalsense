@@ -43,7 +43,7 @@ def generation_tab(state: gr.State):
         info="The number of perturbation tiers to use. Tiers with higher ID numbers should apply progressively more aggressive perturbations to the model outputs.",
         value=state.value["perturbation_tiers"],
         precision=0,
-        minimum=3,
+        minimum=2,
         visible=False,
     )
 
