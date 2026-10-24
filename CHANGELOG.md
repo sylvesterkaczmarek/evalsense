@@ -7,10 +7,10 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- Meta-evaluation now requires an explicit complete set of at least three tier IDs. Results are separated by experiment/scorer identity, with exclusion counts and bootstrap intervals. Duplicate observations and mixed epochs are rejected.
+- Meta-evaluation now requires an explicit complete set of at least two tier IDs. Results are separated by experiment/scorer identity, with exclusion counts and confidence intervals. Duplicate observations and mixed epochs are rejected.
 
 ### Enhancements
-- None
+- Deliberate two-tier meta-evaluations report pairwise ordering accuracy, concordant/discordant counts and Wilson intervals on the mean-correlation scale. Ties remain explicit exclusions. Three-or-more-tier designs retain sample-level bootstrap intervals.
 
 ### Bug fixes
 - Prevent incomplete two-tier and undefined meta-evaluation correlations from silently inflating the reported mean. Report failed/missing logs and unestimable intervals.

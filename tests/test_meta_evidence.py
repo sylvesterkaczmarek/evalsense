@@ -2,6 +2,7 @@
 
 import json
 import math
+from statistics import NormalDist
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -114,7 +115,17 @@ class MetaEvidenceTests(unittest.TestCase):
     def test_expected_tiers_are_required_and_not_inferred(self):
         with self.assertRaises(TypeError):
             MetaResultAnalyser()(complete({1: [0, 1, 2]}))  # type: ignore[call-arg]
-        for tiers in [[], [0], [0, 1], [0, 1, 1], [0, 1, True], [0, 1, 2.0], "012"]:
+        for tiers in [
+            [],
+            [0],
+            [0, 0],
+            [0, True],
+            [0, 1.0],
+            [0, 1, 1],
+            [0, 1, True],
+            [0, 1, 2.0],
+            "012",
+        ]:
             with self.subTest(tiers=tiers), self.assertRaises(ValueError):
                 analyse(complete({1: [0, 1, 2]}), expected_tiers=tiers)
 
@@ -496,6 +507,219 @@ class MetaEvidenceTests(unittest.TestCase):
                 self.assertEqual(rows["n_included"].item(), 2)
                 self.assertEqual(rows["avg_correlation"].item(), 0)
                 self.assertEqual(json.loads(rows["expected_tiers"].item()), [0, 1, 2])
+
+
+def two_tier(values: dict[str | int, list[Any]], tiers=(0, 1)) -> Project:
+    return project(
+        {
+            record(tier): log(
+                [sample(id, tier, scores[index]) for id, scores in values.items()]
+            )
+            for index, tier in enumerate(tiers)
+        }
+    )
+
+
+class TwoTierMetaTests(unittest.TestCase):
+    def test_planned_two_tiers_measure_ordering_across_samples(self):
+        data = two_tier({i: [0, 1] if i < 80 else [1, 0] for i in range(100)})
+        row = analyse(data, expected_tiers=(0, 1)).row(0, named=True)
+        self.assertEqual(row["analysis_kind"], "pairwise_ordering")
+        self.assertEqual(row["n_included"], 100)
+        self.assertEqual(row["n_concordant"], 80)
+        self.assertEqual(row["n_discordant"], 20)
+        self.assertEqual(row["pairwise_accuracy"], 0.8)
+        self.assertAlmostEqual(row["avg_correlation"], 0.6)
+        self.assertEqual(row["ci_status"], "wilson_pairwise")
+        self.assertIsNone(row["n_resamples"])
+        self.assertIsNone(row["seed"])
+
+    def test_wilson_limits_match_independent_formula_on_mean_scale(self):
+        for successes, total, confidence in [
+            (80, 100, 0.95),
+            (0, 12, 0.9),
+            (12, 12, 0.99),
+            (1, 1, 0.95),
+        ]:
+            with self.subTest(successes=successes, total=total, confidence=confidence):
+                data = two_tier(
+                    {i: [0, 1] if i < successes else [1, 0] for i in range(total)}
+                )
+                row = analyse(
+                    data, expected_tiers=(0, 1), confidence_level=confidence
+                ).row(0, named=True)
+                z = NormalDist().inv_cdf((1 + confidence) / 2)
+                p = successes / total
+                denominator = 1 + z * z / total
+                centre = (p + z * z / (2 * total)) / denominator
+                radius = (
+                    z
+                    * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
+                    / denominator
+                )
+                self.assertAlmostEqual(
+                    row["ci_low"], 2 * (centre - radius) - 1, places=12
+                )
+                self.assertAlmostEqual(
+                    row["ci_high"], 2 * (centre + radius) - 1, places=12
+                )
+                self.assertLess(row["ci_low"], row["ci_high"])
+
+    def test_direction_and_nonconsecutive_tiers_are_explicit(self):
+        data = two_tier({1: [3, 1], 2: [4, 2], 3: [1, 2]}, tiers=(-5, 10))
+        ascending = analyse(data, expected_tiers=(10, -5)).row(0, named=True)
+        descending = analyse(
+            data, expected_tiers=(-5, 10), lower_tier_is_better=True
+        ).row(0, named=True)
+        self.assertEqual(ascending["n_concordant"], 1)
+        self.assertEqual(descending["n_concordant"], 2)
+        self.assertAlmostEqual(
+            ascending["avg_correlation"], -descending["avg_correlation"]
+        )
+        self.assertAlmostEqual(ascending["ci_low"], -descending["ci_high"])
+
+    def test_ties_are_counted_and_not_used_as_zero_correlations(self):
+        data = two_tier({"yes": [0, 1], "no": [1, 0], "tie": [2, 2]})
+        row = analyse(data, expected_tiers=(0, 1)).row(0, named=True)
+        self.assertEqual(row["n_samples"], 3)
+        self.assertEqual(row["n_included"], 2)
+        self.assertEqual(row["n_excluded"], 1)
+        self.assertEqual(row["n_constant"], 1)
+        self.assertEqual(row["n_concordant"], 1)
+        self.assertEqual(row["n_discordant"], 1)
+        self.assertEqual(row["pairwise_accuracy"], 0.5)
+        self.assertEqual(row["avg_correlation"], 0)
+
+    def test_all_ties_or_no_pairs_return_no_estimate(self):
+        for data in [two_tier({1: [1, 1], 2: [0, 0]}), two_tier({})]:
+            with self.subTest(data=data):
+                row = analyse(data, expected_tiers=(0, 1)).row(0, named=True)
+                self.assertEqual(row["n_included"], 0)
+                self.assertEqual(row["n_concordant"], 0)
+                self.assertEqual(row["n_discordant"], 0)
+                for name in (
+                    "avg_correlation",
+                    "pairwise_accuracy",
+                    "ci_low",
+                    "ci_high",
+                ):
+                    self.assertIsNone(row[name])
+                self.assertEqual(row["ci_status"], "insufficient_samples")
+
+    def test_missing_tier_is_never_reinterpreted_as_a_two_tier_design(self):
+        data = two_tier({1: [0, 1], 2: [1, 0]})
+        row = analyse(data, expected_tiers=(0, 1, 2)).row(0, named=True)
+        self.assertEqual(row["analysis_kind"], "mean_spearman")
+        self.assertEqual(row["n_incomplete_tiers"], 2)
+        self.assertEqual(row["n_included"], 0)
+        self.assertIsNone(row["avg_correlation"])
+        self.assertIsNone(row["pairwise_accuracy"])
+        with self.assertRaisesRegex(ValueError, "expected integer tier"):
+            analyse(complete({1: [0, 1, 2]}), expected_tiers=(0, 1))
+
+    def test_pairwise_exclusion_counts_reconcile(self):
+        logs = {
+            record(0): log(
+                [
+                    sample("ok", 0, 0),
+                    sample("tie", 0, 1),
+                    sample("invalid", 0, 1),
+                    sample("missing-score", 0, 0),
+                    sample("missing-tier", 0, 0),
+                ]
+            ),
+            record(1): log(
+                [
+                    sample("ok", 1, 1),
+                    sample("tie", 1, 1),
+                    sample("invalid", 1, math.inf),
+                    sample("missing-score", 1, 1, scores={}),
+                ]
+            ),
+        }
+        row = analyse(project(logs), expected_tiers=(0, 1)).row(0, named=True)
+        self.assertEqual(row["n_samples"], 5)
+        self.assertEqual(row["n_included"], 1)
+        self.assertEqual(row["n_excluded"], 4)
+        for key in (
+            "n_constant",
+            "n_invalid_scores",
+            "n_missing_scores",
+            "n_incomplete_tiers",
+        ):
+            self.assertEqual(row[key], 1)
+        self.assertEqual(row["n_concordant"] + row["n_discordant"], row["n_included"])
+
+    def test_pairwise_validation_requires_review_of_both_outputs(self):
+        data = two_tier({1: [0, 1]})
+        row = analyse(
+            data, expected_tiers=(0, 1), tier_validation_field="reviewed"
+        ).row(0, named=True)
+        self.assertEqual(row["n_unvalidated"], 1)
+        self.assertIsNone(row["pairwise_accuracy"])
+        for entry in data.get_logs(type="evaluation").values():
+            for observation in entry.samples or []:
+                observation.metadata["reviewed"] = True
+        row = analyse(
+            data, expected_tiers=(0, 1), tier_validation_field="reviewed"
+        ).row(0, named=True)
+        self.assertEqual(row["pairwise_accuracy"], 1)
+
+    def test_pairwise_interval_is_independent_of_order_and_bootstrap_settings(self):
+        data = two_tier({1: [0, 1], 2: [1, 0], 3: [0, 1]})
+        first = analyse(data, expected_tiers=(0, 1))
+        entries = {
+            k: v.model_copy(update={"samples": list(reversed(v.samples or []))})
+            for k, v in reversed(list(data.get_logs(type="evaluation").items()))
+        }
+        second = analyse(
+            project(entries), expected_tiers=(1, 0), seed=42, n_resamples=1000
+        )
+        self.assertTrue(first.equals(second))
+
+    def test_three_tier_results_keep_the_existing_bootstrap(self):
+        row = analyse(complete({1: [0, 1, 2], 2: [2, 1, 0]})).row(0, named=True)
+        self.assertEqual(row["analysis_kind"], "mean_spearman")
+        self.assertEqual(row["ci_status"], "percentile_bootstrap")
+        for name in ("n_concordant", "n_discordant", "pairwise_accuracy"):
+            self.assertIsNone(row[name])
+        self.assertEqual(row["n_resamples"], 2000)
+        self.assertEqual(row["seed"], 0)
+
+    def test_pairwise_read_only_log_roundtrip(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("evalsense.workflow.project.PROJECTS_PATH", Path(tmp)),
+        ):
+            stored = Project("pairwise")
+            stored.evaluation_log_path.mkdir(parents=True)
+            for t in (0, 1):
+                path = stored.evaluation_log_path / f"2026_task_{t}.json"
+                write_eval_log(
+                    log([sample(1, t, t), sample(2, t, 1 - t), sample(3, t, 2)]),
+                    location=str(path),
+                )
+                stored.update_record(
+                    record(t), ResultRecord(status="success", log_location=str(path))
+                )
+            before = {
+                str(p): p.read_bytes() for p in Path(tmp).rglob("*") if p.is_file()
+            }
+            row = analyse(Project("pairwise"), expected_tiers=(0, 1)).row(0, named=True)
+            self.assertEqual(row["n_constant"], 1)
+            self.assertEqual(row["pairwise_accuracy"], 0.5)
+            after = {
+                str(p): p.read_bytes() for p in Path(tmp).rglob("*") if p.is_file()
+            }
+            self.assertEqual(before, after)
+
+    def test_pairwise_uses_comparisons_without_subtraction_overflow(self):
+        row = analyse(
+            two_tier({1: [-1e308, 1e308], 2: [1e308, -1e308]}), expected_tiers=(0, 1)
+        ).row(0, named=True)
+        self.assertEqual(row["n_concordant"], 1)
+        self.assertEqual(row["n_discordant"], 1)
+        self.assertEqual(row["avg_correlation"], 0)
 
 
 if __name__ == "__main__":
