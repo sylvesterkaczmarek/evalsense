@@ -7,13 +7,15 @@ Instructions on how to update this Changelog are available in the `Updating the 
 ## Unreleased
 
 ### Breaking changes
-- None
+- The BLEU evaluator now records unsmoothed sentence BLEU-4 instead of unigram precision. The default scorer is `Sentence BLEU`; the aggregate is `<evaluator name> (corpus)`.
+
+  Re-score under a new evaluator name or in a fresh project; existing caches and notebook outputs are unchanged. Update result-column selectors. The legacy `BleuPrecisionScoreCalculator` remains available for direct unigram-precision callers. Corpus BLEU arithmetic is unchanged; repeated-epoch aggregation remains tracked separately in #69.
 
 ### Enhancements
 - None
 
 ### Bug fixes
-- None
+- Use all four modified n-gram precisions and the brevity penalty in BLEU sample-level analyses.
 
 ### Documentation
 - None

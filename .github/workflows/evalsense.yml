@@ -22,6 +22,11 @@ jobs:
         uses: jakebailey/pyright-action@v2
         with:
           version: 1.1.399
+      - name: Run regression tests with extras and the reference BLEU backend
+        env:
+          EVALSENSE_TEST_NATIVE_BLEU: "1"
+          MPLBACKEND: Agg
+        run: python -m unittest discover -s tests -v
 
   lint:
     runs-on: ubuntu-latest
