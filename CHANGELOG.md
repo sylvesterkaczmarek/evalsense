@@ -16,7 +16,7 @@ Instructions on how to update this Changelog are available in the `Updating the 
 - Prevent unparseable ternary answers from being scored as matching unknowns, and validate judge comparison responses as complete binary answers.
 
 ### Documentation
-- Describe QAGS behavior in the component docstrings and its uses and limitations in the Guide, with links to the original method and EvalSense's own case study. Align executable notebook selections and labels with the evaluator names.
+- Describe QAGS behavior in the component docstrings and its uses and limitations in the Guide, with links to the original method and EvalSense's own case study. Derive notebook column selections and labels from the configured evaluator names.
 
 #### QAGS migration
 

@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from datasets import Dataset, DatasetDict
 from inspect_ai.log import read_eval_log, write_eval_log
-from inspect_ai.model import Model, ModelOutput
-from inspect_ai.solver import generate
+from inspect_ai.model import Model, ModelName, ModelOutput
+from inspect_ai.scorer import Target
+from inspect_ai.solver import TaskState, generate
 
 from evalsense.datasets.managers.huggingface import HuggingFaceDatasetManager
 from evalsense.evaluation import Evaluator, ExperimentConfig
@@ -513,6 +514,55 @@ class AsyncQagsTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.value, 1.0)
         self.assertEqual(cast(Any, fake.generate).await_count, 5)
+
+    async def test_evaluator_names_match_scorer_and_component_keys(self):
+        for mode in ("ternary", "exact", "judge"):
+            for name, model_name in (
+                ("Custom agreement", "Judge A"),
+                ("Other criterion", "Judge B"),
+            ):
+                with self.subTest(mode=mode, name=name):
+                    config = FixtureConfig(
+                        cast(Literal["ternary", "exact", "judge"], mode), logprobs=False
+                    )
+                    evaluator = get_qags_evaluator(
+                        name=name,
+                        model_name=model_name,
+                        config=config,
+                        model_config=ModelConfig("mockllm/judge"),
+                    )
+                    factory = evaluator.scorer
+                    assert isinstance(factory, QagsScorerFactory)
+                    self.assertEqual(evaluator.name, f"{name} ({model_name})")
+                    self.assertEqual(factory.name, evaluator.name)
+                    responses = ["One?", "One?", "yes", "yes"]
+                    if mode == "judge":
+                        responses.append("yes")
+                    score_fun = factory.create_scorer(model_with(*responses))
+                    state = TaskState(
+                        model=ModelName("mockllm/generator"),
+                        sample_id="fixture",
+                        epoch=1,
+                        input="input",
+                        messages=[],
+                        output=ModelOutput.from_content(
+                            model="fixture", content="candidate"
+                        ),
+                    )
+                    result = await score_fun(state, Target("reference"))
+                    assert result is not None
+                    if mode == "ternary":
+                        keys = {
+                            f"{evaluator.name} {metric}"
+                            for metric in ("Coverage", "Groundedness", "Accuracy")
+                        }
+                        self.assertEqual(result.value, dict.fromkeys(keys, 1.0))
+                        assert isinstance(factory.metrics, list)
+                        declared_metrics = factory.metrics[0]
+                        assert isinstance(declared_metrics, dict)
+                        self.assertEqual(set(declared_metrics), keys)
+                    else:
+                        self.assertEqual(result.value, 1.0)
 
 
 class PipelineTests(unittest.TestCase):
