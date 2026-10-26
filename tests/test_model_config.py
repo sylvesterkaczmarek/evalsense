@@ -84,6 +84,8 @@ class ModelConfigTests(unittest.TestCase):
         for value in (
             f"https://user:{MARKER}@example.invalid/v1",
             f"//user:{MARKER}@example.invalid/v1",
+            f"user:{MARKER}@example.invalid/v1",
+            f"example.invalid/v1?api_key={MARKER}",
             f"https://example.invalid/v1?api_key={MARKER}",
             f"https://example.invalid/v1?access%5Ftoken={MARKER}",
             f"https://example.invalid/v1?X-Amz-Signature={MARKER}",
@@ -93,6 +95,21 @@ class ModelConfigTests(unittest.TestCase):
         ):
             with self.subTest(kind=value.split(":", 1)[0]):
                 self.assert_hidden({"base_url": value})
+
+    def test_ordinary_prompt_text_is_not_an_authentication_value(self):
+        for text in (
+            "Basic instructions for this evaluation.",
+            "Digest the following paragraph before answering.",
+            "See https://example.invalid/?key=public-example for instructions.",
+        ):
+            with self.subTest(text=text):
+                config = ModelConfig(
+                    "mockllm/model", generation_args=cast(Any, {"system_message": text})
+                )
+                self.assertEqual(
+                    json.loads(config.record.generation_args_json)["system_message"],
+                    text,
+                )
 
     def test_generation_options_are_checked_too(self):
         for options in (

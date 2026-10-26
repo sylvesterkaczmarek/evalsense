@@ -73,13 +73,16 @@ def _secret_key(value: str) -> bool:
     return normalised in _AUTH_KEYS or normalised.endswith(_SECRET_SUFFIXES)
 
 
-def _check_text(value: str) -> None:
-    if re.match(r"(?i)^\s*(?:bearer|basic|digest)\s+\S+", value):
+def _check_text(value: str, *, url_value: bool = False) -> None:
+    if re.fullmatch(r"(?i)\s*(?:bearer|basic|digest)\s+\S+\s*", value):
         raise ModelCredentialError(_CREDENTIAL_ERROR)
-    if "://" not in value and not value.startswith("//"):
-        return
+    text = value.strip()
+    if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", text) and not text.startswith("//"):
+        if not url_value:
+            return
+        text = "//" + text
     try:
-        parsed = urlsplit(value)
+        parsed = urlsplit(text)
     except ValueError:
         raise ModelCredentialError(_VALUE_ERROR) from None
     if parsed.username is not None or parsed.password is not None:
@@ -115,6 +118,8 @@ def validate_public_config(value: Any, *, _depth: int = 0) -> None:
                 raise ModelCredentialError(_VALUE_ERROR)
             if type(key) is str:
                 _check_text(key)
+                if type(item) is str and _key(key).endswith(("url", "uri", "endpoint")):
+                    _check_text(item, url_value=True)
                 if _secret_key(unquote(key)) and item is not None:
                     raise ModelCredentialError(_CREDENTIAL_ERROR)
                 if _key(unquote(key)).endswith("headers") and item is not None:
